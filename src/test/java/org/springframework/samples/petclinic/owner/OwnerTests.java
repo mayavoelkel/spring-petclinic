@@ -18,6 +18,8 @@ package org.springframework.samples.petclinic.owner;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OwnerTests {
@@ -46,6 +48,120 @@ class OwnerTests {
 		owner.addPet(pet);
 
 		assertEquals(1, owner.getPets().size());
+	}
+
+	@Test
+	void addPetIgnoresNull() {
+		Owner owner = new Owner();
+
+		owner.addPet(null);
+
+		assertTrue(owner.getPets().isEmpty());
+	}
+
+	@Test
+	void addPetAddsPersistedPetWhenOwnerHasUnsavedPet() {
+		Owner owner = new Owner();
+		Pet unsaved = new Pet();
+		unsaved.setName("Draft");
+		owner.addPet(unsaved);
+		Pet persisted = new Pet();
+		persisted.setId(5);
+		persisted.setName("Buddy");
+
+		owner.addPet(persisted);
+
+		assertEquals(2, owner.getPets().size());
+		assertTrue(owner.getPets().contains(persisted));
+	}
+
+	@Test
+	void addPetDoesNotAddSecondCopyOfSamePersistedPet() {
+		Owner owner = new Owner();
+		Pet original = new Pet();
+		original.setId(5);
+		original.setName("Buddy");
+		Pet copy = new Pet();
+		copy.setId(5);
+		copy.setName("Buddy");
+
+		owner.addPet(original);
+		owner.addPet(copy);
+
+		assertEquals(1, owner.getPets().size());
+		assertSame(original, owner.getPets().get(0));
+	}
+
+	@Test
+	void addPetKeepsDifferentPersistedPets() {
+		Owner owner = new Owner();
+		Pet buddy = new Pet();
+		buddy.setId(5);
+		buddy.setName("Buddy");
+		Pet rex = new Pet();
+		rex.setId(6);
+		rex.setName("Rex");
+
+		owner.addPet(buddy);
+		owner.addPet(rex);
+
+		assertEquals(2, owner.getPets().size());
+	}
+
+	@Test
+	void getPetByIdReturnsNullWhenOwnerHasNoSuchPet() {
+		Owner owner = new Owner();
+		Pet buddy = new Pet();
+		buddy.setId(5);
+		owner.addPet(buddy);
+
+		assertNull(owner.getPet(99));
+	}
+
+	@Test
+	void getPetByIdSkipsUnsavedPets() {
+		Owner owner = new Owner();
+		Pet unsaved = new Pet();
+		unsaved.setName("Draft");
+		owner.addPet(unsaved);
+
+		assertNull(owner.getPet(1));
+	}
+
+	@Test
+	void getPetByNameSkipsPetsWithoutName() {
+		Owner owner = new Owner();
+		Pet unnamed = new Pet();
+		unnamed.setId(4);
+		owner.addPet(unnamed);
+		Pet buddy = new Pet();
+		buddy.setId(5);
+		buddy.setName("Buddy");
+		owner.addPet(buddy);
+
+		assertSame(buddy, owner.getPet("Buddy"));
+	}
+
+	@Test
+	void getPetByNameIgnoresCase() {
+		Owner owner = new Owner();
+		Pet buddy = new Pet();
+		buddy.setId(5);
+		buddy.setName("Buddy");
+		owner.addPet(buddy);
+
+		assertSame(buddy, owner.getPet("bUDDY"));
+	}
+
+	@Test
+	void getPetByNameCanIgnoreUnsavedPets() {
+		Owner owner = new Owner();
+		Pet unsaved = new Pet();
+		unsaved.setName("Buddy");
+		owner.addPet(unsaved);
+
+		assertNull(owner.getPet("Buddy", true));
+		assertSame(unsaved, owner.getPet("Buddy", false));
 	}
 
 }

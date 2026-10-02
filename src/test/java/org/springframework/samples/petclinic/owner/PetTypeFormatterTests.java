@@ -61,6 +61,12 @@ class PetTypeFormatterTests {
 	}
 
 	@Test
+	void printShowsPlaceholderWhenTypeHasNoName() {
+		String petTypeName = this.petTypeFormatter.print(new PetType(), Locale.ENGLISH);
+		assertThat(petTypeName).isEqualTo("<null>");
+	}
+
+	@Test
 	void shouldParse() throws ParseException {
 		given(types.findPetTypes()).willReturn(makePetTypes());
 		PetType petType = petTypeFormatter.parse("Bird", Locale.ENGLISH);

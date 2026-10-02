@@ -16,7 +16,10 @@
 
 package org.springframework.samples.petclinic.owner;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
@@ -26,6 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledInNativeImage;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.aot.DisabledInAotMode;
@@ -116,6 +120,39 @@ class VisitControllerTests {
 			.andExpect(model().attributeHasFieldErrors("visit", "description"))
 			.andExpect(status().isOk())
 			.andExpect(view().name("pets/createOrUpdateVisitForm"));
+	}
+
+	@Test
+	void initNewVisitFormFailsWhenPetDoesNotBelongToOwner() {
+		assertThatThrownBy(() -> mockMvc.perform(get("/owners/{ownerId}/pets/{petId}/visits/new", TEST_OWNER_ID, 99)))
+			.hasRootCauseInstanceOf(IllegalArgumentException.class)
+			.hasRootCauseMessage("Pet with id 99 not found for owner with id 1.");
+	}
+
+	@Test
+	void initNewVisitFormFailsWhenOwnerDoesNotExist() {
+		assertThatThrownBy(() -> mockMvc.perform(get("/owners/{ownerId}/pets/{petId}/visits/new", 99, TEST_PET_ID)))
+			.hasRootCauseInstanceOf(IllegalArgumentException.class)
+			.hasRootCauseMessage("Owner not found with id: 99. Please ensure the ID is correct ");
+	}
+
+	/**
+	 * Documents current behaviour: a visit submitted with the date left blank is accepted
+	 * and saved without a date.
+	 */
+	@Test
+	void processNewVisitFormCurrentlyAcceptsBlankDate() throws Exception {
+		mockMvc
+			.perform(post("/owners/{ownerId}/pets/{petId}/visits/new", TEST_OWNER_ID, TEST_PET_ID).param("date", "")
+				.param("description", "Visit Description"))
+			.andExpect(model().hasNoErrors())
+			.andExpect(status().is3xxRedirection())
+			.andExpect(view().name("redirect:/owners/{ownerId}"));
+
+		ArgumentCaptor<Owner> saved = ArgumentCaptor.forClass(Owner.class);
+		verify(this.owners).save(saved.capture());
+		assertThat(saved.getValue().getPet(TEST_PET_ID).getVisits()).singleElement()
+			.satisfies(visit -> assertThat(visit.getDate()).isNull());
 	}
 
 }
