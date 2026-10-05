@@ -33,9 +33,18 @@ import java.util.List;
 import java.util.Optional;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.validation.BeanPropertyBindingResult;
+import org.springframework.validation.BindingResult;
+import org.springframework.web.servlet.mvc.support.RedirectAttributesModelMap;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
@@ -179,6 +188,44 @@ class PetControllerTests {
 		}
 
 		@Test
+		void processCreationFormWithMissingBirthDate() throws Exception {
+			mockMvc
+				.perform(post("/owners/{ownerId}/pets/new", TEST_OWNER_ID).param("name", "Betty")
+					.param("type", "hamster"))
+				.andExpect(model().attributeHasNoErrors("owner"))
+				.andExpect(model().attributeHasErrors("pet"))
+				.andExpect(model().attributeHasFieldErrors("pet", "birthDate"))
+				.andExpect(model().attributeHasFieldErrorCode("pet", "birthDate", "required"))
+				.andExpect(status().isOk())
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+		@Test
+		void processCreationFormRethrowsUnrelatedDataIntegrityViolation() {
+			DataIntegrityViolationException unrelated = new DataIntegrityViolationException(
+					"Referential integrity constraint violation: FK_PETS_TYPES");
+			given(owners.saveAndFlush(any(Owner.class))).willThrow(unrelated);
+
+			assertThatThrownBy(
+					() -> mockMvc.perform(post("/owners/{ownerId}/pets/new", TEST_OWNER_ID).param("name", "Betty")
+						.param("type", "hamster")
+						.param("birthDate", "2015-02-12")))
+				.hasRootCause(unrelated);
+		}
+
+		@Test
+		void processCreationFormRethrowsDataIntegrityViolationWithoutMessage() {
+			DataIntegrityViolationException noMessage = new DataIntegrityViolationException((String) null);
+			given(owners.saveAndFlush(any(Owner.class))).willThrow(noMessage);
+
+			assertThatThrownBy(
+					() -> mockMvc.perform(post("/owners/{ownerId}/pets/new", TEST_OWNER_ID).param("name", "Betty")
+						.param("type", "hamster")
+						.param("birthDate", "2015-02-12")))
+				.hasRootCause(noMessage);
+		}
+
+		@Test
 		void initUpdateForm() throws Exception {
 			mockMvc.perform(get("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, TEST_PET_ID))
 				.andExpect(status().isOk())
@@ -267,6 +314,127 @@ class PetControllerTests {
 				.andExpect(model().attributeHasFieldErrorCode("pet", "name", "duplicate"))
 				.andExpect(status().isOk())
 				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+		@Test
+		void processUpdateFormWithFutureBirthDate() throws Exception {
+			String futureBirthDate = LocalDate.now().plusMonths(1).toString();
+
+			mockMvc
+				.perform(post("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, TEST_PET_ID).param("name", "Betty")
+					.param("type", "hamster")
+					.param("birthDate", futureBirthDate))
+				.andExpect(model().attributeHasNoErrors("owner"))
+				.andExpect(model().attributeHasErrors("pet"))
+				.andExpect(model().attributeHasFieldErrors("pet", "birthDate"))
+				.andExpect(model().attributeHasFieldErrorCode("pet", "birthDate", "typeMismatch.birthDate"))
+				.andExpect(status().isOk())
+				.andExpect(view().name("pets/createOrUpdatePetForm"));
+		}
+
+		@Test
+		void processUpdateFormRethrowsUnrelatedDataIntegrityViolation() {
+			DataIntegrityViolationException unrelated = new DataIntegrityViolationException(
+					"Referential integrity constraint violation: FK_PETS_TYPES");
+			given(owners.saveAndFlush(any(Owner.class))).willThrow(unrelated);
+
+			assertThatThrownBy(() -> mockMvc
+				.perform(post("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, TEST_PET_ID).param("name", "Betty")
+					.param("type", "hamster")
+					.param("birthDate", "2015-02-12")))
+				.hasRootCause(unrelated);
+		}
+
+	}
+
+	@Test
+	void initCreationFormFailsWhenOwnerDoesNotExist() {
+		assertThatThrownBy(() -> mockMvc.perform(get("/owners/{ownerId}/pets/new", 99)))
+			.hasRootCauseInstanceOf(IllegalArgumentException.class)
+			.hasRootCauseMessage("Owner not found with id: 99. Please ensure the ID is correct ");
+	}
+
+	/**
+	 * Documents current behaviour: editing a pet id that does not belong to the owner
+	 * fails with a NullPointerException (an HTTP 500 error page) instead of a clear "pet
+	 * not found" error.
+	 */
+	@Test
+	void processUpdateFormForPetNotOwnedByOwnerCurrentlyFailsWithNullPointer() {
+		assertThatThrownBy(() -> mockMvc
+			.perform(post("/owners/{ownerId}/pets/{petId}/edit", TEST_OWNER_ID, 99).param("name", "Betty")
+				.param("type", "hamster")
+				.param("birthDate", "2015-02-12")))
+			.hasRootCauseInstanceOf(NullPointerException.class);
+		verify(owners, never()).saveAndFlush(any(Owner.class));
+	}
+
+	/**
+	 * Calls the controller directly to exercise safety checks that cannot be reached
+	 * through HTTP, because the pet {@code id} field is not bindable from requests.
+	 */
+	@Nested
+	class DirectControllerCalls {
+
+		private PetController controller;
+
+		private Owner owner;
+
+		@BeforeEach
+		void setup() {
+			this.controller = new PetController(owners, types);
+			this.owner = owners.findById(TEST_OWNER_ID).orElseThrow();
+		}
+
+		private Pet pet(Integer id, String name) {
+			Pet pet = new Pet();
+			pet.setId(id);
+			pet.setName(name);
+			pet.setBirthDate(LocalDate.of(2015, 2, 12));
+			return pet;
+		}
+
+		@Test
+		void findPetFailsWhenOwnerDoesNotExist() {
+			assertThatIllegalArgumentException().isThrownBy(() -> controller.findPet(99, TEST_PET_ID))
+				.withMessage("Owner not found with id: 99. Please ensure the ID is correct ");
+		}
+
+		@Test
+		void creationSkipsDuplicateNameCheckForAlreadySavedPet() {
+			Pet saved = pet(10, "petty");
+			BindingResult result = new BeanPropertyBindingResult(saved, "pet");
+
+			String view = controller.processCreationForm(owner, saved, result, new RedirectAttributesModelMap());
+
+			assertThat(result.hasErrors()).isFalse();
+			assertThat(view).isEqualTo("redirect:/owners/{ownerId}");
+			assertThat(owner.getPets()).contains(saved);
+		}
+
+		@Test
+		void updateRefusesPetWithoutId() {
+			Pet unsaved = pet(null, "Fresh");
+			BindingResult result = new BeanPropertyBindingResult(unsaved, "pet");
+
+			assertThatIllegalStateException()
+				.isThrownBy(
+						() -> controller.processUpdateForm(owner, unsaved, result, new RedirectAttributesModelMap()))
+				.withMessage("'pet.getId()' must not be null");
+			verify(owners, never()).saveAndFlush(any(Owner.class));
+		}
+
+		@Test
+		void updateAddsPetThatIsNotYetOnOwnersList() {
+			Pet detached = pet(99, "Rex");
+			BindingResult result = new BeanPropertyBindingResult(detached, "pet");
+
+			String view = controller.processUpdateForm(owner, detached, result, new RedirectAttributesModelMap());
+
+			assertThat(result.hasErrors()).isFalse();
+			assertThat(view).isEqualTo("redirect:/owners/{ownerId}");
+			assertThat(owner.getPets()).contains(detached);
+			verify(owners).saveAndFlush(owner);
 		}
 
 	}

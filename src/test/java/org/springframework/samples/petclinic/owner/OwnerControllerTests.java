@@ -33,6 +33,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasItem;
@@ -188,6 +189,16 @@ class OwnerControllerTests {
 	}
 
 	@Test
+	void processFindFormRedirectsOutOfBoundsPageWithoutLastNameToFirstPage() throws Exception {
+		when(this.owners.findByLastNameStartingWith(eq(""), any(Pageable.class)))
+			.thenReturn(new PageImpl<>(List.of(george(), new Owner())));
+
+		mockMvc.perform(get("/owners").param("page", "3"))
+			.andExpect(status().is3xxRedirection())
+			.andExpect(redirectedUrl("/owners?page=1"));
+	}
+
+	@Test
 	void processFindFormByLastName() throws Exception {
 		Page<Owner> tasks = new PageImpl<>(List.of(george()));
 		when(this.owners.findByLastNameStartingWith(eq("Franklin"), any(Pageable.class))).thenReturn(tasks);
@@ -293,6 +304,22 @@ class OwnerControllerTests {
 			.andExpect(model().attribute("owner",
 					hasProperty("pets", hasItem(hasProperty("visits", hasSize(greaterThan(0)))))))
 			.andExpect(view().name("owners/ownerDetails"));
+	}
+
+	@Test
+	void showOwnerFailsWhenOwnerDoesNotExist() {
+		assertThatThrownBy(() -> mockMvc.perform(get("/owners/{ownerId}", 99)))
+			.hasRootCauseInstanceOf(IllegalArgumentException.class)
+			.hasRootCauseMessage(
+					"Owner not found with id: 99. Please ensure the ID is correct and the owner exists in the database.");
+	}
+
+	@Test
+	void initUpdateOwnerFormFailsWhenOwnerDoesNotExist() {
+		assertThatThrownBy(() -> mockMvc.perform(get("/owners/{ownerId}/edit", 99)))
+			.hasRootCauseInstanceOf(IllegalArgumentException.class)
+			.hasRootCauseMessage(
+					"Owner not found with id: 99. Please ensure the ID is correct and the owner exists in the database.");
 	}
 
 	@Test
